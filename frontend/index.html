@@ -1,182 +1,80 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <title>SkyPath</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <style>
-      body { font-family: sans-serif; margin: 24px; max-width: 980px; }
-      label { display:block; margin: 10px 0 6px; font-weight: 600; }
-      input { padding: 8px; font-size: 14px; width: 220px; }
-      button { padding: 9px 14px; font-size: 14px; cursor: pointer; }
-      .row { display: flex; gap: 16px; align-items: end; flex-wrap: wrap; }
-      .muted { color: #666; }
-      .error { color: #b00020; }
-      .card { border: 1px solid #ddd; border-radius: 10px; padding: 14px; margin: 12px 0; }
-      .seg { margin: 8px 0; padding: 10px; background: #fafafa; border-radius: 8px; }
-      .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; background:#f1f1f1; margin-right: 6px; }
-      code { background: #f4f4f4; padding: 2px 6px; border-radius: 4px; }
-      .totals { margin-top: 10px; font-weight: 600; }
-      .layover { margin: 6px 0 2px; }
-    </style>
+    <link rel="stylesheet" href="styles.css" />
   </head>
 
   <body>
-    <h1>SkyPath</h1>
-    <p class="muted">Search itineraries (direct, 1-stop, 2-stop) for the provided dataset.</p>
+    <div class="container">
+      <div class="header">
+        <div class="title">
+          <h1>SkyPath</h1>
+          <div class="subtitle">
+            Prototype itinerary search (direct, 1-stop, 2-stop). Results sorted by total travel time.
+          </div>
+        </div>
 
-    <div class="row">
-      <div>
-        <label for="origin">Origin (IATA)</label>
-        <input id="origin" maxlength="3" placeholder="JFK" />
+        <div class="badge" id="healthBadge" title="Backend health">
+          <span class="dot" id="healthDot"></span>
+          <span id="healthText">Checking backend…</span>
+        </div>
       </div>
-      <div>
-        <label for="destination">Destination (IATA)</label>
-        <input id="destination" maxlength="3" placeholder="LAX" />
+
+      <div class="panel">
+        <div class="formGrid">
+          <div>
+            <label for="origin">Origin (IATA)</label>
+            <input id="origin" maxlength="3" placeholder="JFK" autocomplete="off" />
+          </div>
+
+          <div>
+            <label for="destination">Destination (IATA)</label>
+            <input id="destination" maxlength="3" placeholder="LAX" autocomplete="off" />
+          </div>
+
+          <div>
+            <label for="date">Date</label>
+            <input id="date" type="date" />
+          </div>
+
+          <div class="actions">
+            <div class="actionsRow">
+              <button class="miniBtn" id="swapBtn" title="Swap origin and destination">Swap</button>
+              <button class="primary" id="searchBtn" title="Search itineraries">Search</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="helperRow">
+          <div class="presets">
+            <button class="miniBtn" data-preset="JFK,LAX,2024-03-15">JFK → LAX</button>
+            <button class="miniBtn" data-preset="SFO,NRT,2024-03-15">SFO → NRT</button>
+            <button class="miniBtn" data-preset="BOS,SEA,2024-03-15">BOS → SEA</button>
+            <button class="miniBtn" data-preset="SYD,LAX,2024-03-15">SYD → LAX</button>
+          </div>
+
+          <div class="muted">
+            API: <code id="apiBase"></code>
+          </div>
+        </div>
+
+        <div class="statusBar">
+          <div id="status" class="msg" style="display:none;"></div>
+          <div id="error" class="msg error" style="display:none;"></div>
+        </div>
       </div>
-      <div>
-        <label for="date">Date</label>
-        <input id="date" type="date" />
+
+      <div class="resultsHeader">
+        <h2>Results</h2>
+        <div class="note" id="resultsNote">—</div>
       </div>
-      <div>
-        <button id="searchBtn">Search</button>
-      </div>
+
+      <div id="results"></div>
     </div>
 
-    <p id="status" class="muted"></p>
-    <p id="error" class="error"></p>
-
-    <div id="results"></div>
-
-    <script>
-      // Keep backend reachable from the browser.
-      // If you later deploy differently, make this configurable.
-      const API_BASE = "http://localhost:8000";
-
-      const originEl = document.getElementById("origin");
-      const destEl = document.getElementById("destination");
-      const dateEl = document.getElementById("date");
-      const statusEl = document.getElementById("status");
-      const errorEl = document.getElementById("error");
-      const resultsEl = document.getElementById("results");
-      const btn = document.getElementById("searchBtn");
-
-      function minutesToHhMm(mins) {
-        const h = Math.floor(mins / 60);
-        const m = mins % 60;
-        return `${h}h ${m}m`;
-      }
-
-      function clearMessages() {
-        statusEl.textContent = "";
-        errorEl.textContent = "";
-      }
-
-      function setLoading(isLoading) {
-        btn.disabled = isLoading;
-        btn.textContent = isLoading ? "Searching..." : "Search";
-      }
-
-      function validateInputs(origin, destination, date) {
-        if (!origin || origin.length !== 3) return "Origin must be a 3-letter IATA code.";
-        if (!destination || destination.length !== 3) return "Destination must be a 3-letter IATA code.";
-        if (origin === destination) return "Origin and destination must be different.";
-        if (!date) return "Please select a date.";
-        return null;
-      }
-
-      function renderResults(itins) {
-        resultsEl.innerHTML = "";
-
-        if (!itins || itins.length === 0) {
-          resultsEl.innerHTML = `<p class="muted">No results found.</p>`;
-          return;
-        }
-
-        itins.forEach((itin, idx) => {
-          const card = document.createElement("div");
-          card.className = "card";
-
-          const header = document.createElement("div");
-          header.innerHTML = `
-            <div>
-              <span class="pill">#${idx + 1}</span>
-              <span class="pill">${itin.segments.length - 1} stop(s)</span>
-              <span class="pill">Total: ${minutesToHhMm(itin.totalDurationMinutes)}</span>
-              <span class="pill">Price: $${itin.totalPrice.toFixed(2)}</span>
-            </div>
-          `;
-          card.appendChild(header);
-
-          itin.segments.forEach((s, i) => {
-            const seg = document.createElement("div");
-            seg.className = "seg";
-            seg.innerHTML = `
-              <div><strong>${s.origin} → ${s.destination}</strong> <span class="muted">(${s.flightNumber})</span></div>
-              <div class="muted">Dep: <code>${s.departureTimeLocal}</code></div>
-              <div class="muted">Arr: <code>${s.arrivalTimeLocal}</code></div>
-            `;
-            card.appendChild(seg);
-
-            if (i < itin.layoversMinutes.length) {
-              const lay = document.createElement("div");
-              lay.className = "layover muted";
-              lay.textContent = `Layover: ${minutesToHhMm(itin.layoversMinutes[i])}`;
-              card.appendChild(lay);
-            }
-          });
-
-          resultsEl.appendChild(card);
-        });
-      }
-
-      async function doSearch() {
-        clearMessages();
-        resultsEl.innerHTML = "";
-
-        const origin = originEl.value.trim().toUpperCase();
-        const destination = destEl.value.trim().toUpperCase();
-        const date = dateEl.value;
-
-        const validationError = validateInputs(origin, destination, date);
-        if (validationError) {
-          errorEl.textContent = validationError;
-          return;
-        }
-
-        setLoading(true);
-        statusEl.textContent = "Searching…";
-
-        try {
-          const url = `${API_BASE}/search?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&date=${encodeURIComponent(date)}`;
-          const resp = await fetch(url, { cache: "no-store" });
-
-          if (!resp.ok) {
-            let detail = `API error (${resp.status})`;
-            try {
-              const err = await resp.json();
-              if (err && err.detail) detail = err.detail;
-            } catch (_) {}
-            throw new Error(detail);
-          }
-
-          const data = await resp.json();
-          statusEl.textContent = `Found ${data.length} itineraries.`;
-          renderResults(data);
-        } catch (e) {
-          errorEl.textContent = e.message || "Unknown error";
-          statusEl.textContent = "";
-        } finally {
-          setLoading(false);
-        }
-      }
-
-      btn.addEventListener("click", doSearch);
-
-      // Nice default for quick testing
-      originEl.value = "JFK";
-      destEl.value = "LAX";
-      dateEl.value = "2024-03-15";
-    </script>
+    <script src="app.js"></script>
   </body>
 </html>
